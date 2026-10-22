@@ -21,15 +21,16 @@ class RequestHandler {
         // Initialize sub-modules
         this.authSwitcher = new AuthSwitcher(logger, config, authSource, browserManager);
         // index.js mounts the API modules onto this instance's prototype at runtime.
-        this.formatConverter = /** @type {FormatConverter &
-         * import("../FormatConverter/ChatCompletionsConverter") &
-         * import("../FormatConverter/EmbeddingsConverter") &
-         * import("../FormatConverter/ClaudeRequestConverter") &
-         * import("../FormatConverter/ClaudeResponseConverter") &
-         * import("../FormatConverter/ResponsesRequestConverter") &
-         * import("../FormatConverter/ResponsesStreamResponseConverter") &
-         * import("../FormatConverter/ResponsesNonStreamResponseConverter")}
-         */ (new FormatConverter(logger, serverSystem));
+        this.formatConverter =
+            /** @type {FormatConverter &
+             * import("../FormatConverter/ChatCompletionsConverter") &
+             * import("../FormatConverter/EmbeddingsConverter") &
+             * import("../FormatConverter/ClaudeRequestConverter") &
+             * import("../FormatConverter/ClaudeResponseConverter") &
+             * import("../FormatConverter/ResponsesRequestConverter") &
+             * import("../FormatConverter/ResponsesStreamResponseConverter") &
+             * import("../FormatConverter/ResponsesNonStreamResponseConverter")}
+             */ (new FormatConverter(logger, serverSystem));
 
         this.needsSwitchingAfterRequest = false;
 

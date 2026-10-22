@@ -155,6 +155,8 @@ services:
 
 #### 🔑 步骤 2：账号管理
 
+本 Fork 支持 OAuth JSON 导入和账号账单、配额查询，使用方式及权限说明见[账号余额、配额与 OAuth JSON 导入](docs/zh/account-insights.md)。
+
 部署后，您需要使用以下方式之一添加 Google 账号：
 
 **方法 1：VNC 登录（推荐）**

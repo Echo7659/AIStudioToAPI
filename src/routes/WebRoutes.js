@@ -11,6 +11,9 @@ const crypto = require("crypto");
 const path = require("path");
 const AuthRoutes = require("./AuthRoutes");
 const StatusRoutes = require("./StatusRoutes");
+const OAuthAccountRoutes = require("./OAuthAccountRoutes");
+const AccountInsightsRoutes = require("./AccountInsightsRoutes");
+const UpstreamChannelRoutes = require("./UpstreamChannelRoutes");
 
 /**
  * Web Routes Manager
@@ -28,6 +31,9 @@ class WebRoutes {
         // Initialize specialized route handlers
         this.authRoutes = new AuthRoutes(serverSystem);
         this.statusRoutes = new StatusRoutes(serverSystem);
+        this.oauthAccountRoutes = new OAuthAccountRoutes(serverSystem);
+        this.accountInsightsRoutes = new AccountInsightsRoutes(serverSystem);
+        this.upstreamChannelRoutes = new UpstreamChannelRoutes(serverSystem);
     }
 
     /**
@@ -60,7 +66,11 @@ class WebRoutes {
 
         // Setup all route handlers
         this.authRoutes.setupRoutes(app);
-        this.statusRoutes.setupRoutes(app, this.authRoutes.isAuthenticated.bind(this.authRoutes));
+        const isAuthenticated = this.authRoutes.isAuthenticated.bind(this.authRoutes);
+        this.statusRoutes.setupRoutes(app, isAuthenticated);
+        this.oauthAccountRoutes.setupRoutes(app, isAuthenticated);
+        this.accountInsightsRoutes.setupRoutes(app, isAuthenticated);
+        this.upstreamChannelRoutes.setupRoutes(app, isAuthenticated);
     }
 }
 

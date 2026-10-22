@@ -32,3 +32,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Private account/runtime state and generated frontend assets
+configs/auth/
+data/
+ui/dist/
+.codex_tmp/

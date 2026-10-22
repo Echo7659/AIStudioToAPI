@@ -23,6 +23,7 @@ const RequestHandler = require("./RequestHandler");
 const UsageStatsService = require("./UsageStatsService");
 const ConfigLoader = require("../utils/ConfigLoader");
 const WebRoutes = require("../routes/WebRoutes");
+const OfficialGeminiGateway = require("./OfficialGeminiGateway");
 
 /**
  * Proxy Server System
@@ -100,27 +101,28 @@ class ProxyServerSystem extends EventEmitter {
         this.browserManager.setConnectionRegistry(this.connectionRegistry);
 
         // index.js mounts the request/response modules onto this instance's prototype at runtime.
-        this.requestHandler = /** @type {RequestHandler &
-         * import("./RequestHandler/ConnectionHandler") &
-         * import("./RequestHandler/RetryHandler") &
-         * import("./RequestHandler/GeminiHandler") &
-         * import("./RequestHandler/EmbeddingsHandler") &
-         * import("./RequestHandler/UploadHandler") &
-         * import("./RequestHandler/ChatCompletionsHandler") &
-         * import("./RequestHandler/ResponsesHandler") &
-         * import("./RequestHandler/ClaudeHandler") &
-         * import("./RequestHandler/ErrorHandler") &
-         * import("./RequestHandler/TransportHandler")}
-         */ (
-            new RequestHandler(
-                this,
-                this.connectionRegistry,
-                this.logger,
-                this.browserManager,
-                this.config,
-                this.authSource
-            )
-        );
+        this.requestHandler =
+            /** @type {RequestHandler &
+             * import("./RequestHandler/ConnectionHandler") &
+             * import("./RequestHandler/RetryHandler") &
+             * import("./RequestHandler/GeminiHandler") &
+             * import("./RequestHandler/EmbeddingsHandler") &
+             * import("./RequestHandler/UploadHandler") &
+             * import("./RequestHandler/ChatCompletionsHandler") &
+             * import("./RequestHandler/ResponsesHandler") &
+             * import("./RequestHandler/ClaudeHandler") &
+             * import("./RequestHandler/ErrorHandler") &
+             * import("./RequestHandler/TransportHandler")}
+             */ (
+                new RequestHandler(
+                    this,
+                    this.connectionRegistry,
+                    this.logger,
+                    this.browserManager,
+                    this.config,
+                    this.authSource
+                )
+            );
         this.browserManager.setSystemBusyProvider(() => this.requestHandler?.isSystemBusy === true);
 
         this.httpServer = null;
@@ -427,8 +429,22 @@ class ProxyServerSystem extends EventEmitter {
             }
 
             const chunks = [];
-            req.on("data", chunk => chunks.push(chunk));
+            const isOAuthImport = /^\/api\/oauth\/accounts\/import\/?$/i.test(req.path);
+            let collectedBytes = 0;
+            let bodyRejected = false;
+            req.on("data", chunk => {
+                if (bodyRejected) return;
+                collectedBytes += chunk.length;
+                if (isOAuthImport && collectedBytes > 6 * 1024 * 1024) {
+                    bodyRejected = true;
+                    chunks.length = 0;
+                    res.status(413).json({ code: "import_too_large" });
+                    return;
+                }
+                chunks.push(chunk);
+            });
             req.on("end", () => {
+                if (bodyRejected) return;
                 req.rawBody = Buffer.concat(chunks);
 
                 // Try to parse JSON for req.body compatibility
@@ -473,6 +489,10 @@ class ProxyServerSystem extends EventEmitter {
 
         // API authentication middleware
         app.use(this._createAuthMiddleware());
+
+        // Select the independent OAuth transport after client authentication,
+        // while sharing the existing protocol converters and response handlers.
+        app.use(new OfficialGeminiGateway(this).middleware());
 
         // API routes
         app.get(["/v1/models"], (req, res) => {

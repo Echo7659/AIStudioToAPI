@@ -7,10 +7,12 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const archiver = require("archiver");
 const VersionChecker = require("../utils/VersionChecker");
 const LoggingService = require("../utils/LoggingService");
 const UsageStatsService = require("../core/UsageStatsService");
+const { parseBrowserAuth } = require("../auth/BrowserAuth");
 
 /**
  * Status Routes Manager
@@ -42,6 +44,34 @@ class StatusRoutes {
             error: "System is busy switching or recovering accounts. Please try again later.",
             message: "systemBusySwitchingOrRecoveringAccounts",
         });
+    }
+
+    async _saveBrowserAuth(content) {
+        const data = parseBrowserAuth(content);
+        const configDir = path.join(process.cwd(), "configs", "auth");
+        await fs.promises.mkdir(configDir, { recursive: true });
+        const filenames = await fs.promises.readdir(configDir);
+        const indices = filenames
+            .filter(name => /^auth-\d+\.json$/.test(name))
+            .map(name => Number(name.match(/^auth-(\d+)\.json$/)[1]));
+        let index = indices.length > 0 ? Math.max(...indices) + 1 : 0;
+        const temporaryPath = path.join(configDir, `.import-${crypto.randomUUID()}.tmp`);
+        try {
+            await fs.promises.writeFile(temporaryPath, JSON.stringify(data, null, 2), { flag: "wx", mode: 0o600 });
+            for (let attempt = 0; attempt < 100; attempt++, index++) {
+                const filename = `auth-${index}.json`;
+                try {
+                    // Publish a complete file atomically without replacing an existing account.
+                    await fs.promises.link(temporaryPath, path.join(configDir, filename));
+                    return filename;
+                } catch (error) {
+                    if (error.code !== "EEXIST") throw error;
+                }
+            }
+            throw new Error("Could not allocate an authentication file");
+        } finally {
+            await fs.promises.unlink(temporaryPath).catch(() => {});
+        }
     }
 
     /**
@@ -838,29 +868,18 @@ class StatusRoutes {
             }
 
             try {
+                parseBrowserAuth(content);
+            } catch (error) {
+                return res.status(400).json({ code: "invalid_browser_auth", error: error.message });
+            }
+
+            try {
                 // Abort any ongoing background preload task before upload
                 // This prevents race conditions where background tasks continue initializing contexts
                 // while we're adding a new account
                 await this.serverSystem.browserManager.abortBackgroundPreload();
 
-                // Ensure directory exists
-                const configDir = path.join(process.cwd(), "configs", "auth");
-                if (!fs.existsSync(configDir)) {
-                    fs.mkdirSync(configDir, { recursive: true });
-                }
-
-                // If content is object, stringify it
-                const fileContent = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
-
-                // Always use max index + 1 to ensure new auth is always the latest
-                // This simplifies dedup logic assumption: higher index = newer auth
-                const existingIndices = this.serverSystem.authSource.availableIndices || [];
-                const nextAuthIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 0;
-
-                const newFilename = `auth-${nextAuthIndex}.json`;
-                const filePath = path.join(configDir, newFilename);
-
-                await fs.promises.writeFile(filePath, fileContent);
+                const newFilename = await this._saveBrowserAuth(content);
 
                 // Reload auth sources to pick up changes
                 this.serverSystem.authSource.reloadAuthSources();
@@ -894,17 +913,7 @@ class StatusRoutes {
                 // while we're adding multiple new accounts
                 await this.serverSystem.browserManager.abortBackgroundPreload();
 
-                // Ensure directory exists
-                const configDir = path.join(process.cwd(), "configs", "auth");
-                if (!fs.existsSync(configDir)) {
-                    fs.mkdirSync(configDir, { recursive: true });
-                }
-
                 const results = [];
-
-                // Get starting index
-                const existingIndices = this.serverSystem.authSource.availableIndices || [];
-                let nextAuthIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 0;
 
                 // Write all files first, track each file's result
                 for (let i = 0; i < files.length; i++) {
@@ -916,21 +925,17 @@ class StatusRoutes {
                     }
 
                     try {
-                        // If content is object, stringify it
-                        const fileContent = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
-
-                        const newFilename = `auth-${nextAuthIndex}.json`;
-                        const filePath = path.join(configDir, newFilename);
-
-                        await fs.promises.writeFile(filePath, fileContent);
+                        const newFilename = await this._saveBrowserAuth(content);
 
                         results.push({ filename: newFilename, index: i, success: true });
                         this.logger.info(`[WebUI] Batch upload: generated ${newFilename}`);
-
-                        nextAuthIndex++;
                     } catch (error) {
-                        results.push({ error: error.message, index: i, success: false });
-                        this.logger.error(`[WebUI] Batch upload failed for file ${i}: ${error.message}`);
+                        results.push({
+                            error: "Invalid browser auth JSON or file could not be saved",
+                            index: i,
+                            success: false,
+                        });
+                        this.logger.warn(`[WebUI] Batch upload rejected file ${i}`);
                     }
                 }
 
@@ -966,7 +971,7 @@ class StatusRoutes {
         app.get("/api/files/:filename", isAuthenticated, (req, res) => {
             const filename = req.params.filename;
             // Security check
-            if (!/^[a-zA-Z0-9.-]+$/.test(filename) || filename.includes("..")) {
+            if (!/^auth-\d+\.json$/.test(filename)) {
                 return res.status(400).json({ error: "Invalid filename" });
             }
             const filePath = path.join(process.cwd(), "configs", "auth", filename);

@@ -153,6 +153,8 @@ If you prefer to build the Docker image yourself, you can use the following comm
 
 #### 🔑 Step 2: Account Management
 
+This fork adds OAuth JSON import and account billing/quota insights. See [Account balances, quotas and OAuth JSON import](docs/en/account-insights.md) for setup and credential requirements.
+
 After deployment, you need to add Google accounts using one of these methods:
 
 **Method 1: VNC-Based Login (Recommended)**
