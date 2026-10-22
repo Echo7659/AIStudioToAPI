@@ -8,6 +8,7 @@
 const fs = require("fs");
 const fsPromises = require("fs").promises;
 const path = require("path");
+const { parseBrowserAuth } = require("./BrowserAuth");
 
 /**
  * Authentication Source Management Module
@@ -129,7 +130,7 @@ class AuthSource {
             const authContent = this._getAuthContent(index);
             if (authContent) {
                 try {
-                    const authData = JSON.parse(authContent);
+                    const authData = parseBrowserAuth(authContent);
                     validIndices.push(index);
                     this.accountNameMap.set(index, authData.accountName || null);
                     // Track expired status from auth file
@@ -258,7 +259,7 @@ class AuthSource {
         }
 
         try {
-            return JSON.parse(jsonString);
+            return parseBrowserAuth(jsonString);
         } catch (e) {
             this.logger.error(`[Auth] Failed to parse JSON content from authentication source #${index}: ${e.message}`);
             return null;

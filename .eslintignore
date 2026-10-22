@@ -14,6 +14,7 @@ tmp/
 
 # Config files
 configs/
+data/
 
 # Build outputs
 dist/

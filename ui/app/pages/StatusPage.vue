@@ -927,6 +927,16 @@
                                 {{ t("noActiveAccount") }}
                             </div>
                         </div>
+                        <OAuthAccountPanel
+                            :browser-accounts="state.accountDetails"
+                            :busy="isBusy"
+                            @accounts-loaded="oauthAccounts = $event"
+                        />
+                        <AccountInsightsPanel
+                            :accounts="state.accountDetails"
+                            :oauth-accounts="oauthAccounts"
+                            :busy="isBusy"
+                        />
                     </div>
                 </div>
             </div>
@@ -2820,8 +2830,11 @@ import escapeHtml from "../utils/escapeHtml";
 import I18n from "../utils/i18n";
 import { useTheme } from "../utils/useTheme";
 import EnvVarTooltip from "../components/EnvVarTooltip.vue";
+import OAuthAccountPanel from "../components/OAuthAccountPanel.vue";
+import AccountInsightsPanel from "../components/AccountInsightsPanel.vue";
 
 const router = useRouter();
+const oauthAccounts = ref([]);
 const fileInput = ref(null);
 const usageStatsImportInput = ref(null);
 const activeTab = ref("home");
