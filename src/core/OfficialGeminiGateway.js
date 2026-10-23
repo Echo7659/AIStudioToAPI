@@ -23,10 +23,29 @@ class OfficialGeminiGateway {
     middleware() {
         return async (req, res, next) => {
             try {
-                const channel = await this.serverSystem.upstreamChannelStore.get();
                 if (req.aborted || res.destroyed || res.writableEnded) return;
-                if (channel.mode === "build") return next();
-                if (req.method === "GET" && req.path.toLowerCase() === "/vnc") return next();
+                const namespace = req.path.match(/^\/(oauth|build)(?=\/|$)/i);
+                if (namespace) {
+                    req.request_original_url = req.originalUrl || req.url;
+                    const remainingUrl = req.url.slice(namespace[0].length);
+                    req.url = remainingUrl.startsWith("/") ? remainingUrl : `/${remainingUrl}`;
+                    if (namespace[1].toLowerCase() === "build") {
+                        res.set("X-AIStudio-Upstream", "aistudio-build");
+                        return next();
+                    }
+                }
+                const channel = namespace
+                    ? await this.serverSystem.upstreamChannelStore.getOAuthTarget()
+                    : await this.serverSystem.upstreamChannelStore.get();
+                if (req.aborted || res.destroyed || res.writableEnded) return;
+                if (channel.mode === "build") {
+                    res.set("X-AIStudio-Upstream", "aistudio-build");
+                    return next();
+                }
+                if (req.method === "GET" && req.path.toLowerCase() === "/vnc") {
+                    if (namespace) return this._error(res, 501, "official_endpoint_not_supported");
+                    return next();
+                }
                 if (/^\/(?:proxy\/)?upload\//i.test(req.path)) {
                     return this._error(res, 501, "official_file_upload_not_supported");
                 }

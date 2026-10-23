@@ -66,6 +66,12 @@
             <p v-if="channelError" class="notice error" role="alert">{{ t(channelError) }}</p>
             <p v-if="channelMode === 'oauth'" class="notice">{{ t("oauthChannelOfficialHelp") }}</p>
             <p v-else class="notice">{{ t("oauthChannelBuildHelp") }}</p>
+            <p class="notice">
+                {{ t("oauthChannelFixedEndpoints") }}
+                <code>/build/v1</code>
+                ·
+                <code>/oauth/v1</code>
+            </p>
             <p
                 v-if="channelMode === 'oauth' && selectedOAuthAccount && !selectedOAuthAccount.identityVerified"
                 class="notice warning"
@@ -294,6 +300,7 @@ const errorKeys = {
     missing_client: "oauthNeedsClient",
     missing_oauth_client: "oauthNeedsClient",
     missing_refresh_token: "oauthErrorMissingRefreshToken",
+    oauth_account_in_use: "oauthChannelActiveAccountDelete",
     oauth_client_invalid: "oauthErrorInvalidClient",
     oauth_client_required: "oauthNeedsClient",
     oauth_refresh_invalid: "oauthErrorInvalidGrant",
