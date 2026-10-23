@@ -54,6 +54,16 @@ GOOGLE_OAUTH_PROJECT_ID=YOUR_CLOUD_PROJECT_ID
 
 When `API_UPSTREAM_CHANNEL` is set, the UI is read-only. Otherwise settings persist in `data/upstream-channel.json`. Switch channels or accounts before deleting the active OAuth credential.
 
+### Keep both channels available
+
+Set `GOOGLE_OAUTH_ACCOUNT_ID` and `GOOGLE_OAUTH_PROJECT_ID` while leaving the default channel on Build:
+
+- `/v1` follows the default console setting, which initially uses Build.
+- `/build/v1` and `/build/v1beta` always use the existing Build browser channel.
+- `/oauth/v1` and `/oauth/v1beta` always use the independently configured OAuth account and Cloud project. Without an independent target, the saved default OAuth selection can supply the target.
+
+All addresses use the same client API key. Missing OAuth configuration, authentication failures or quota errors never fall back to Build. An account used by the fixed OAuth target cannot be deleted.
+
 OAuth-only accounts can call the official API without a browser, but financial page collection still requires a matching signed-in browser account. The insights panel reports that limitation explicitly. Inference authorization and billing-page access are independent capabilities.
 
 Credentials are stored separately in `configs/auth/oauth-accounts.json`, covered by the existing Docker `/app/configs/auth` mount. Private file permissions are applied where supported. List responses omit tokens and secrets; credentials are not written to browser local storage.

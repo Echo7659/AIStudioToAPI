@@ -1,4 +1,5 @@
 const OAuthAccountStore = require("../auth/OAuthAccountStore");
+const { ChannelConfigError } = require("../core/UpstreamChannelStore");
 
 class OAuthAccountRoutes {
     constructor(serverSystem) {
@@ -12,7 +13,7 @@ class OAuthAccountRoutes {
         try {
             await action();
         } catch (error) {
-            if (error instanceof OAuthAccountStore.OAuthAccountError) {
+            if (error instanceof OAuthAccountStore.OAuthAccountError || error instanceof ChannelConfigError) {
                 return res.status(error.statusCode).json({
                     ...(error.account ? { account: error.account } : {}),
                     code: error.code,
@@ -46,6 +47,16 @@ class OAuthAccountRoutes {
                 const channel = await this.serverSystem.upstreamChannelStore?.get();
                 if (channel?.mode === "oauth" && channel.accountId === req.params.id) {
                     return res.status(409).json({ code: "oauth_account_in_use" });
+                }
+                if (this.serverSystem.upstreamChannelStore?.getOAuthTarget) {
+                    try {
+                        const target = await this.serverSystem.upstreamChannelStore.getOAuthTarget();
+                        if (target.accountId === req.params.id) {
+                            return res.status(409).json({ code: "oauth_account_in_use" });
+                        }
+                    } catch (error) {
+                        if (error.code !== "official_channel_not_configured") throw error;
+                    }
                 }
                 res.json(await this.store.deleteAccount(req.params.id));
             })

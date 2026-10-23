@@ -59,6 +59,16 @@ GOOGLE_OAUTH_PROJECT_ID=YOUR_CLOUD_PROJECT_ID
 
 设置 `API_UPSTREAM_CHANNEL` 后，控制台将显示由环境变量管理；留空时使用持久化的 `data/upstream-channel.json`。删除当前官方通道使用的 OAuth 账号前，需先切换通道或账号。
 
+### 同时保留两个通道
+
+配置 `GOOGLE_OAUTH_ACCOUNT_ID` 和 `GOOGLE_OAUTH_PROJECT_ID` 后，可以保持默认通道为 Build，并使用独立入口：
+
+- `/v1`：使用控制台选择的默认通道，未设置时为 Build。
+- `/build/v1`、`/build/v1beta`：始终使用原 Build 浏览器通道。
+- `/oauth/v1`、`/oauth/v1beta`：始终使用上述环境变量指定的官方 OAuth 账号和 Cloud 项目。未指定独立目标时，可以使用默认 OAuth 通道中保存的目标。
+
+这些地址使用相同的客户端 API Key。官方通道未配置、鉴权失败或配额不足会直接返回错误，不会回退至 Build。固定 OAuth 目标仍在使用的账号不可删除。
+
 仅导入 OAuth、尚无同邮箱网页会话的账号可以直接调用官方 API，但暂时无法读取 Google 账单网页中的余额。面板会显示这一原因；关联同邮箱浏览器登录后可查询金额。余额读取和模型调用是两个独立能力。
 
 OAuth 凭据保存在 `configs/auth/oauth-accounts.json`，独立于 `auth-N.json`；已有 Docker `/app/configs/auth` 挂载会一并持久化。文件按平台支持设置为仅当前用户可读写，列表接口不返回 Token 或 secret，界面也不会写入浏览器本地存储。

@@ -49,6 +49,26 @@ class UpstreamChannelStore {
         }
     }
 
+    async getOAuthTarget() {
+        if (this.env.GOOGLE_OAUTH_ACCOUNT_ID || this.env.GOOGLE_OAUTH_PROJECT_ID) {
+            try {
+                return {
+                    ...validate({
+                        accountId: this.env.GOOGLE_OAUTH_ACCOUNT_ID || null,
+                        mode: "oauth",
+                        projectId: this.env.GOOGLE_OAUTH_PROJECT_ID || null,
+                    }),
+                    managedByEnvironment: true,
+                };
+            } catch (error) {
+                throw new ChannelConfigError(error.code || "official_channel_not_configured", 503);
+            }
+        }
+        const current = await this.get();
+        if (current.mode === "oauth") return current;
+        throw new ChannelConfigError("official_channel_not_configured", 503);
+    }
+
     async set(input, accounts) {
         const operation = this.queue.then(async () => {
             if (this.env.API_UPSTREAM_CHANNEL) throw new ChannelConfigError("channel_managed_by_environment", 409);

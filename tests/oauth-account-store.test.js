@@ -6,6 +6,7 @@ const test = require("node:test");
 const express = require("express");
 const OAuthAccountStore = require("../src/auth/OAuthAccountStore");
 const OAuthAccountRoutes = require("../src/routes/OAuthAccountRoutes");
+const { ChannelConfigError } = require("../src/core/UpstreamChannelStore");
 
 async function fixture(t, options = {}) {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "aistudio-oauth-test-"));
@@ -414,9 +415,16 @@ test("HTTP routes require console authentication, disable caching, and return sa
     const app = express();
     app.use(express.json());
     let channel = { mode: "build" };
+    let fixedTarget = null;
     new OAuthAccountRoutes({
         oauthAccountStore: store,
-        upstreamChannelStore: { get: async () => channel },
+        upstreamChannelStore: {
+            get: async () => channel,
+            getOAuthTarget: async () => {
+                if (!fixedTarget) throw new ChannelConfigError("official_channel_not_configured", 503);
+                return fixedTarget;
+            },
+        },
     }).setupRoutes(app, (req, res, next) => {
         if (req.headers.authorization !== "Bearer console-session") return res.sendStatus(401);
         next();
@@ -450,4 +458,13 @@ test("HTTP routes require console authentication, disable caching, and return sa
     assert.equal(deletion.status, 409);
     assert.equal((await deletion.json()).code, "oauth_account_in_use");
     assert.equal((await store.listAccounts()).length, 1);
+    channel = { mode: "build" };
+    fixedTarget = { accountId: id, mode: "oauth", projectId: "fixed-project" };
+    const fixedDeletion = await fetch(`${base}/api/oauth/accounts/${id}`, { headers, method: "DELETE" });
+    assert.equal(fixedDeletion.status, 409);
+    assert.equal((await fixedDeletion.json()).code, "oauth_account_in_use");
+    assert.equal((await store.listAccounts()).length, 1);
+    fixedTarget = null;
+    assert.equal((await fetch(`${base}/api/oauth/accounts/${id}`, { headers, method: "DELETE" })).status, 200);
+    assert.equal((await store.listAccounts()).length, 0);
 });

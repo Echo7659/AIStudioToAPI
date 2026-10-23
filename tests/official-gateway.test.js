@@ -11,9 +11,12 @@ const response = {
     usageMetadata: { candidatesTokenCount: 2, promptTokenCount: 1, totalTokenCount: 3 },
 };
 
-async function fixture(run) {
+async function fixture(run, options = {}) {
     const requests = [];
+    const buildRequests = [];
+    const completedRequests = [];
     const state = { accountId: "oauth-id", mode: "oauth", projectId: "test-cloud-project" };
+    const target = { accountId: "oauth-id", mode: "oauth", projectId: "test-cloud-project" };
     const account = { email: "test@example.com", id: "oauth-id", identityVerified: true, needsOAuthClient: false };
     const system = {
         config: {
@@ -26,7 +29,10 @@ async function fixture(run) {
         },
         logger,
         oauthAccountStore: { listAccounts: async () => [account] },
-        upstreamChannelStore: { get: async () => ({ ...state }) },
+        upstreamChannelStore: {
+            get: async () => ({ ...state }),
+            getOAuthTarget: async () => ({ ...target }),
+        },
     };
     const transport = {
         dispatch: async (request, channel, emit, signal) => {
@@ -60,12 +66,40 @@ async function fixture(run) {
     };
     const app = express();
     app.use(express.json());
+    app.use((req, res, next) => {
+        if (options.authenticate && req.headers.authorization !== "Bearer accepted-key") return res.sendStatus(401);
+        res.on("finish", () =>
+            completedRequests.push({
+                originalUrl: req.originalUrl,
+                request_original_url: req.request_original_url,
+                url: req.url,
+            })
+        );
+        next();
+    });
     app.use(new OfficialGeminiGateway(system, { transport }).middleware());
-    app.use((req, res) => res.json({ build: true }));
+    app.use((req, res) => {
+        buildRequests.push({
+            originalUrl: req.originalUrl,
+            path: req.path,
+            request_original_url: req.request_original_url,
+            url: req.url,
+        });
+        res.json({ build: true });
+    });
     const server = app.listen(0, "127.0.0.1");
     await new Promise(resolve => server.once("listening", resolve));
     try {
-        await run({ account, base: `http://127.0.0.1:${server.address().port}`, requests, state, system });
+        await run({
+            account,
+            base: `http://127.0.0.1:${server.address().port}`,
+            buildRequests,
+            completedRequests,
+            requests,
+            state,
+            system,
+            target,
+        });
     } finally {
         server.closeAllConnections();
         await new Promise(resolve => server.close(resolve));
@@ -116,8 +150,133 @@ test("OAuth transport shares conversion and response handling for all four API f
     });
 });
 
+test("explicit OAuth namespace and original Build endpoints work simultaneously without changing the default", async () => {
+    await fixture(async ({ base, buildRequests, completedRequests, requests, state }) => {
+        state.mode = "build";
+        const old = await fetch(base + "/v1/chat/completions?trace=old", {
+            body: JSON.stringify({ messages: [{ content: "hello", role: "user" }], model: "gemini-test" }),
+            headers: { "Content-Type": "application/json", "X-AIStudio-Channel": "oauth" },
+            method: "POST",
+        });
+        assert.deepEqual(await old.json(), { build: true });
+        assert.equal(old.headers.get("x-aistudio-upstream"), "aistudio-build");
+        assert.equal(requests.length, 0);
+
+        const official = await fetch(base + "/oauth/v1/chat/completions?trace=official", {
+            body: JSON.stringify({ messages: [{ content: "hello", role: "user" }], model: "gemini-test" }),
+            headers: {
+                "Content-Type": "application/json",
+                "X-AIStudio-Channel": "build",
+                "x-goog-user-project": "wrong-project",
+            },
+            method: "POST",
+        });
+        assert.equal(official.status, 200);
+        assert.equal((await official.json()).choices[0].message.content, "API_OK");
+        assert.equal(official.headers.get("x-aistudio-upstream"), "google-oauth");
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].channel.projectId, "test-cloud-project");
+        assert.equal(state.mode, "build");
+        assert.equal(buildRequests.length, 1);
+        const preserved = completedRequests.find(item => item.originalUrl.startsWith("/oauth/"));
+        assert.equal(preserved.originalUrl, "/oauth/v1/chat/completions?trace=official");
+        assert.equal(preserved.request_original_url, preserved.originalUrl);
+        assert.equal(preserved.url, "/v1/chat/completions?trace=official");
+    });
+});
+
+test("namespace matching respects segment boundaries and handles prefix case, trailing slashes and model formats", async () => {
+    await fixture(async ({ base, buildRequests, requests, state }) => {
+        state.mode = "build";
+        for (const url of ["/oauthish/v1/models", "/buildish/v1/models", "/oauth%2Fv1/models"]) {
+            assert.deepEqual(await (await fetch(base + url)).json(), { build: true });
+            assert.equal(buildRequests.at(-1).url, url);
+        }
+        assert.equal(requests.length, 0);
+        const openaiModels = await fetch(base + "/OaUtH/v1/models/?pageSize=10");
+        assert.equal(openaiModels.status, 200);
+        assert.equal((await openaiModels.json()).data[0].id, "gemini-test");
+        const geminiModels = await fetch(base + "/oauth/v1beta/models/");
+        assert.equal((await geminiModels.json()).models[0].name, "models/gemini-test");
+        assert.equal(requests.length, 2);
+        assert.ok(requests.every(item => item.request.path === "/v1beta/models"));
+        assert.deepEqual(requests[0].request.query_params, { pageSize: "10" });
+    });
+});
+
+test("explicit Build namespace bypasses an OAuth default or broken channel configuration while preserving the original URL", async () => {
+    await fixture(async ({ base, buildRequests, requests, system }) => {
+        system.upstreamChannelStore.get = async () => {
+            throw new Error("configuration unavailable");
+        };
+        system.upstreamChannelStore.getOAuthTarget = async () => {
+            throw new Error("must not inspect OAuth target");
+        };
+        const result = await fetch(base + "/BuIlD/v1/models/?trace=forced");
+        assert.deepEqual(await result.json(), { build: true });
+        assert.equal(result.headers.get("x-aistudio-upstream"), "aistudio-build");
+        assert.equal(requests.length, 0);
+        assert.equal(buildRequests[0].url, "/v1/models/?trace=forced");
+        assert.equal(buildRequests[0].originalUrl, "/BuIlD/v1/models/?trace=forced");
+        assert.equal(buildRequests[0].request_original_url, buildRequests[0].originalUrl);
+    });
+});
+
+test("explicit OAuth errors and unsupported VNC/uploads cannot reach Build or retry paid requests", async () => {
+    await fixture(async ({ base, buildRequests, requests, state, system }) => {
+        state.mode = "build";
+        const failed = await fetch(base + "/oauth/v1/chat/completions", {
+            body: JSON.stringify({
+                messages: [{ content: "SIMULATE_QUOTA_ERROR", role: "user" }],
+                model: "gemini-test",
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+        });
+        assert.equal(failed.status, 429);
+        assert.equal(requests.length, 1);
+        assert.equal((await fetch(base + "/oauth/vnc")).status, 501);
+        assert.equal((await fetch(base + "/oauth/upload/v1beta/files", { method: "POST" })).status, 501);
+        assert.equal(requests.length, 1);
+        system.upstreamChannelStore.getOAuthTarget = async () => {
+            throw Object.assign(new Error("not configured"), {
+                code: "official_channel_not_configured",
+                statusCode: 503,
+            });
+        };
+        assert.equal((await fetch(base + "/oauth/v1/models")).status, 503);
+        assert.equal(requests.length, 1);
+        assert.equal(buildRequests.length, 0);
+        assert.equal(state.mode, "build");
+    });
+});
+
+test("authentication is checked before either explicit namespace is selected", async () => {
+    await fixture(
+        async ({ base, buildRequests, requests, state }) => {
+            state.mode = "build";
+            for (const path of ["/v1/models", "/oauth/v1/models", "/build/v1/models"]) {
+                assert.equal((await fetch(base + path)).status, 401);
+                assert.equal(
+                    (await fetch(base + path, { headers: { Authorization: "Bearer incorrect-key" } })).status,
+                    401
+                );
+            }
+            assert.equal(buildRequests.length, 0);
+            assert.equal(requests.length, 0);
+            assert.equal(
+                (await fetch(base + "/oauth/v1/models", { headers: { Authorization: "Bearer accepted-key" } })).status,
+                200
+            );
+            assert.equal(requests.length, 1);
+        },
+        { authenticate: true }
+    );
+});
+
 test("disconnecting during account lookup cannot start paid inference after lookup completes", async () => {
-    await fixture(async ({ account, base, requests, system }) => {
+    await fixture(async ({ account, base, requests, state, system }) => {
+        state.mode = "build";
         let release;
         let entered;
         const enteredLookup = new Promise(resolve => {
@@ -132,7 +291,7 @@ test("disconnecting during account lookup cannot start paid inference after look
             return [account];
         };
         const controller = new AbortController();
-        const pending = fetch(base + "/v1/chat/completions", {
+        const pending = fetch(base + "/oauth/v1/chat/completions", {
             body: JSON.stringify({ messages: [{ content: "hello", role: "user" }], model: "gemini-test" }),
             headers: { "Content-Type": "application/json" },
             method: "POST",
@@ -164,9 +323,10 @@ test("disconnecting during asynchronous protocol conversion cannot start paid in
         return original.apply(this, args);
     };
     try {
-        await fixture(async ({ base, requests }) => {
+        await fixture(async ({ base, requests, state }) => {
+            state.mode = "build";
             const controller = new AbortController();
-            const pending = fetch(base + "/v1/chat/completions", {
+            const pending = fetch(base + "/oauth/v1/chat/completions", {
                 body: JSON.stringify({ messages: [{ content: "hello", role: "user" }], model: "gemini-test" }),
                 headers: { "Content-Type": "application/json" },
                 method: "POST",
